@@ -1,0 +1,8 @@
+{
+  "name": "CreativeFlow Content Hub",
+  "description": "A professional dashboard for creative agencies to manage social media content, production status, and assets using Google Sheets as a database and Gemini AI for content optimization.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}

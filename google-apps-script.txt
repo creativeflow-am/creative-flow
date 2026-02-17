@@ -1,0 +1,34 @@
+
+/* 
+INTRUKSI INTEGRASI GOOGLE SHEETS:
+1. Buka Google Sheets Anda.
+2. Klik Extensions > Apps Script.
+3. Hapus semua kode dan paste kode di bawah ini.
+4. Ganti 'SHEET_NAME' dengan nama sheet Anda (Contoh: 'Content').
+5. Klik 'Deploy' > 'New Deployment'.
+6. Pilih type: 'Web App'.
+7. Set Access: 'Anyone'.
+8. Copy URL Web App yang dihasilkan.
+
+STRUKTUR KOLOM (Row 1):
+A: ID | B: Tanggal Post | C: Platform | D: Judul Konten | E: Caption | F: Link Drive | G: Link Thumbnail | H: Status | I: Assignee | J: Notes
+*/
+
+function doGet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Content'); // Ganti sesuai nama sheet Anda
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const rows = data.slice(1);
+  
+  const result = rows.map(row => {
+    let obj = {};
+    headers.forEach((header, index) => {
+      obj[header.toString().toLowerCase().replace(/\s/g, '')] = row[index];
+    });
+    return obj;
+  });
+  
+  return ContentService.createTextOutput(JSON.stringify(result))
+    .setMimeType(ContentService.MimeType.JSON);
+}

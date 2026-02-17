@@ -1,0 +1,268 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>CreativeFlow | UIN Siber Hub</title>
+  
+  <!-- Tailwind CDN first to ensure styles are loaded early -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <style>
+    :root {
+      --g-bg: #111314;
+      --g-surface: #1a1c1e;
+      --g-surface-variant: #282a2c;
+      --g-border: #303134;
+      --g-on-surface: #e3e3e3;
+      --g-on-surface-variant: #c4c7c5;
+      --g-primary: #a8c7fa;
+      --g-primary-container: #004a77;
+      --g-on-primary-container: #c2e7ff;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--g-bg);
+      color: var(--g-on-surface);
+      line-height: 1.6;
+      margin: 0;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Google Sidebar Style (Desktop Only) */
+    .sidebar-rail {
+      width: 72px;
+      height: 100vh;
+      position: fixed;
+      left: 0;
+      top: 0;
+      background: var(--g-bg);
+      border-right: 1px solid var(--g-border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 16px;
+      z-index: 200;
+    }
+
+    .sidebar-item {
+      width: 56px;
+      height: 56px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      margin-bottom: 8px;
+      color: var(--g-on-surface-variant);
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .sidebar-item:hover {
+      background: var(--g-surface-variant);
+      color: var(--g-on-surface);
+    }
+
+    .sidebar-item.active {
+      background: var(--g-primary-container);
+      color: var(--g-on-primary-container);
+    }
+
+    .sidebar-item i {
+      font-size: 18px;
+      margin-bottom: 4px;
+    }
+
+    .sidebar-item span {
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    /* Top Bar Search */
+    .top-bar {
+      height: 64px;
+      position: sticky;
+      top: 0;
+      background: var(--g-bg);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      z-index: 150;
+    }
+
+    .search-pill {
+      background: var(--g-surface);
+      border: 1px solid transparent;
+      border-radius: 28px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      width: 100%;
+      max-width: 720px;
+      margin: 0 auto;
+      transition: all 0.2s;
+    }
+
+    .search-pill:focus-within {
+      background: var(--g-bg);
+      border-color: var(--g-border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .search-pill input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--g-on-surface);
+      width: 100%;
+      padding-left: 8px;
+      font-size: 14px;
+    }
+
+    /* Bottom Nav (Mobile Only) */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 72px;
+      background: rgba(26, 28, 30, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--g-border);
+      display: none;
+      justify-content: space-around;
+      align-items: center;
+      z-index: 500;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .bottom-nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--g-on-surface-variant);
+      gap: 4px;
+      flex: 1;
+      height: 100%;
+    }
+
+    .bottom-nav-item.active {
+      color: var(--g-primary);
+    }
+
+    .bottom-nav-item i {
+      font-size: 20px;
+    }
+
+    .bottom-nav-item span {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Promo Cards */
+    .promo-card {
+      background: var(--g-surface);
+      border-radius: 12px;
+      padding: 16px;
+      border: 1px solid var(--g-border);
+      transition: background 0.2s;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      min-width: 260px;
+    }
+
+    .font-entry {
+      border-bottom: 1px solid var(--g-border);
+      padding: 24px 0;
+    }
+
+    .google-input {
+      background: var(--g-surface) !important;
+      border: 1px solid var(--g-border) !important;
+      color: var(--g-on-surface) !important;
+      border-radius: 12px;
+    }
+
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+
+    .site-footer {
+      padding: 40px 16px;
+      text-align: center;
+      border-top: 1px solid var(--g-border);
+      margin-top: 40px;
+    }
+
+    .site-footer p {
+      font-size: 11px;
+      color: var(--g-on-surface-variant);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    
+    @media (max-width: 768px) {
+      .sidebar-rail {
+        display: none;
+      }
+      .bottom-nav {
+        display: flex;
+      }
+      .search-pill {
+        margin: 0 8px;
+        height: 40px;
+      }
+      .top-bar {
+        padding: 0 12px;
+      }
+      .font-entry {
+        padding: 20px 0;
+      }
+      .main-content-wrapper {
+        padding-left: 0 !important;
+        padding-bottom: 80px !important;
+      }
+    }
+  </style>
+
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom": "https://esm.sh/react-dom@^19.2.4",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.4/client",
+    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.4",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+  <!-- root div must be present before the scripts -->
+  <div id="root"></div>
+  
+  <!-- script call as requested, pointing to root index.tsx -->
+  <script type="module" src="/index.tsx"></script>
+
+  <footer class="site-footer">
+    <p>Educational Project - Powered by Gemini AI. This site is for demonstration purposes only and does not collect sensitive user data.</p>
+  </footer>
+</body>
+</html>
