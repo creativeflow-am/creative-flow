@@ -9,6 +9,8 @@ export enum ContentStatus {
   PUBLISHED = 'Published'
 }
 
+export type ReportStatus = 'Proses Cek' | 'Tidak Diterima' | 'Tervalidasi';
+
 export type Platform = 'Instagram' | 'TikTok' | 'YouTube' | 'LinkedIn' | 'Twitter';
 export type ViewMode = 'Dashboard' | 'Content' | 'Notulensi' | 'Absensi' | 'Evidence' | 'Performance' | 'Jadwal' | 'Members';
 export type ActivityCategory = 'Sosialisasi' | 'Pelayanan Admisi' | 'Produksi Konten' | 'Event Kampus' | 'Lainnya';
@@ -37,9 +39,8 @@ export interface MeetingMinute {
   id: string;
   date: string;
   title: string;
-  attendees: string[];
   summary: string;
-  fileLink: string;
+  fileLink: string; // Will store Base64 or URL
   author: string;
 }
 
@@ -62,13 +63,16 @@ export interface WeeklyReport {
   category: ActivityCategory;
   description: string;
   proofUrl: string;
-  pdfUrl?: string; // Link to the formal PDF report document
+  pdfUrl?: string; // Will store Base64 or URL
   ambassadorName: string;
   date: string;
   location?: string;
+  status: ReportStatus;
 }
 
 export interface SocialMetric {
+  // Added id for data management and to resolve type errors in App.tsx
+  id: string;
   month: string;
   likes: number;
   comments: number;
@@ -82,7 +86,9 @@ export interface ScheduleAssignment {
   taskTitle: string;
   description: string;
   date: string;
+  category: ActivityCategory;
   priority: 'Low' | 'Medium' | 'High';
+  location: string;
 }
 
 export interface AmbassadorProfile {

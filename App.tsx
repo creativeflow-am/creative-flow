@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
-import { ContentStatus, Platform, ContentItem, ViewMode, MeetingMinute, AttendanceRecord, WeeklyReport, Notification, ActivityCategory, SocialMetric, ScheduleAssignment, AmbassadorProfile } from './types';
-import { MOCK_DATA, MOCK_MINUTES, MOCK_REPORTS, WORKFLOW, ASSIGNEES, MOCK_SOCIAL_METRICS, AMBASSADOR_PROFILES } from './constants';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ContentStatus, Platform, ContentItem, ViewMode, MeetingMinute, AttendanceRecord, WeeklyReport, Notification, ActivityCategory, SocialMetric, ScheduleAssignment, AmbassadorProfile, ReportStatus } from './types';
+import { ASSIGNEES, AMBASSADOR_PROFILES, MOCK_SOCIAL_METRICS } from './constants';
 import ContentCard from './components/ContentCard';
 import NotulensiCard from './components/NotulensiCard';
 import AttendanceModule from './components/AttendanceModule';
@@ -11,53 +11,80 @@ import ScheduleCard from './components/ScheduleCard';
 import MemberCard from './components/MemberCard';
 import DashboardView from './components/DashboardView';
 import Toast from './components/Toast';
-import { optimizeCaption } from './services/geminiService';
-
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+import { optimizeCaption, generateDraft } from './services/geminiService';
+import { fetchSheetData, saveSheetData, updateSheetData, deleteSheetData } from './services/googleSheetService';
 
 const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('Dashboard');
-  const [contentItems, setContentItems] = useState<ContentItem[]>(MOCK_DATA);
-  const [minutesItems, setMinutesItems] = useState<MeetingMinute[]>(MOCK_MINUTES);
-  const [reportItems, setReportItems] = useState<WeeklyReport[]>(MOCK_REPORTS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  
+  // States
+  const [contentItems, setContentItems] = useState<ContentItem[]>([]);
+  const [minutesItems, setMinutesItems] = useState<MeetingMinute[]>([]);
+  const [reportItems, setReportItems] = useState<WeeklyReport[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [performanceMetrics, setPerformanceMetrics] = useState<SocialMetric[]>(MOCK_SOCIAL_METRICS);
   const [scheduleItems, setScheduleItems] = useState<ScheduleAssignment[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-
+  
   const [activeTab, setActiveTab] = useState<ContentStatus | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | 'All'>('All');
+  
+  // Modal UI States
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState<ViewMode | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<any>({});
+  const [isAiWorking, setIsAiWorking] = useState(false);
 
-  // Modals state
-  const [isAddingContent, setIsAddingContent] = useState(false);
-  const [isAddingReport, setIsAddingReport] = useState(false);
-  const [isAddingMinutes, setIsAddingMinutes] = useState(false);
-  const [isAddingPerformance, setIsAddingPerformance] = useState(false);
-  const [isAddingSchedule, setIsAddingSchedule] = useState(false);
+  const syncAllData = async (silent = false) => {
+    if (!silent) setIsLoading(true);
+    try {
+      const results = await Promise.allSettled([
+        fetchSheetData('Content'), fetchSheetData('Evidence'), fetchSheetData('Minutes'),
+        fetchSheetData('Schedules'), fetchSheetData('Attendance'), fetchSheetData('Performance')
+      ]);
 
-  // Feature Modals
-  const [isAiToolOpen, setIsAiToolOpen] = useState(false);
-  const [isProdFlowOpen, setIsProdFlowOpen] = useState(false);
-  const [isProofOfWorkOpen, setIsProofOfWorkOpen] = useState(false);
+      const [content, reports, minutes, schedules, attendance, performance] = results.map(r => 
+        r.status === 'fulfilled' ? r.value : null
+      );
 
-  // AI Studio State
-  const [aiForm, setAiForm] = useState({ title: '', draft: '', platform: 'Instagram' });
-  const [aiResult, setAiResult] = useState<string | null>(null);
-  const [isAiLoading, setIsAiLoading] = useState(false);
+      // Cek apakah ada yang gagal total
+      const failedCount = results.filter(r => r.status === 'rejected').length;
+      
+      if (content) setContentItems(content);
+      if (reports) setReportItems(reports);
+      if (minutes) setMinutesItems(minutes);
+      if (schedules) setScheduleItems(schedules);
+      if (attendance) setAttendanceLogs(attendance);
+      if (performance && performance.length > 0) setPerformanceMetrics(performance);
+      
+      if (failedCount === results.length) {
+        throw new Error("Semua tab gagal dimuat. Periksa API_URL dan Tab Spreadsheet.");
+      }
 
-  // Form Temp States
-  const initialContentState: Partial<ContentItem> = { platform: 'Instagram', assignee: ASSIGNEES[0], title: '', caption: '', deadline: '' };
-  const initialReportState: Partial<WeeklyReport> = { category: 'Sosialisasi', ambassadorName: ASSIGNEES[0], activityTitle: '', description: '', pdfUrl: '' };
-  const initialMinuteState: Partial<MeetingMinute> = { author: ASSIGNEES[0], title: '', summary: '', attendees: [], fileLink: '' };
-  const initialPerformanceState: SocialMetric = { month: 'Jan', likes: 0, comments: 0, views: 0, shares: 0 };
-  const initialScheduleState: Partial<ScheduleAssignment> = { ambassadorNames: [], taskTitle: '', description: '', date: new Date().toISOString().split('T')[0], priority: 'Medium' };
+      setIsCloudConnected(true);
+      if (!silent) {
+        if (failedCount > 0) {
+          notify(`${failedCount} Tab Gagal Sinkron. Cek Konsol.`, "warning");
+        } else {
+          notify("Database Cloud Sinkron", "success");
+        }
+      }
+    } catch (e: any) { 
+      setIsCloudConnected(false);
+      notify(e.message || "Gagal Sinkron ke Cloud", "warning"); 
+      console.error("[SyncError]", e);
+    } finally { 
+      if (!silent) setIsLoading(false); 
+    }
+  };
 
-  const [newContent, setNewContent] = useState<Partial<ContentItem>>(initialContentState);
-  const [newReport, setNewReport] = useState<Partial<WeeklyReport>>(initialReportState);
-  const [newMinute, setNewMinute] = useState<Partial<MeetingMinute>>(initialMinuteState);
-  const [newMetric, setNewMetric] = useState<SocialMetric>(initialPerformanceState);
-  const [newSchedule, setNewSchedule] = useState<Partial<ScheduleAssignment>>(initialScheduleState);
+  useEffect(() => {
+    syncAllData();
+  }, []);
 
   const notify = (message: string, type: 'success' | 'info' | 'warning' = 'info') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -66,549 +93,407 @@ const App: React.FC = () => {
 
   const removeNotification = (id: string) => setNotifications(prev => prev.filter(n => n.id !== id));
 
-  // --- LOGIC: CONSOLIDATED TREND DATA FOR DASHBOARD ---
-  const dashboardTrendData = useMemo(() => {
-    const dataByMonth = new Array(12).fill(0);
-    const allItems = [...contentItems, ...reportItems, ...minutesItems, ...scheduleItems];
+  const openAddModal = (type: ViewMode) => {
+    setModalType(type);
+    setEditingId(null);
+    setFormData(getInitialData(type));
+    setIsModalOpen(true);
+  };
 
-    allItems.forEach(item => {
-      const dateStr = (item as any).postDate || (item as any).date || '';
-      if (!dateStr) return;
+  const openEditModal = (type: ViewMode, item: any) => {
+    setModalType(type);
+    setEditingId(item.id);
+    setFormData({ ...item });
+    setIsModalOpen(true);
+  };
 
-      let month = -1;
-      if (dateStr.includes('-')) {
-        month = new Date(dateStr).getMonth();
-      } else if (dateStr.includes('/')) {
-        const parts = dateStr.split('/');
-        month = parseInt(parts[1]) - 1;
+  const getInitialData = (type: ViewMode) => {
+    const today = new Date().toISOString().split('T')[0];
+    if (type === 'Content') return { platform: 'Instagram', assignee: ASSIGNEES[0], deadline: today, status: ContentStatus.IDEATION };
+    if (type === 'Evidence') return { category: 'Produksi Konten', ambassadorname: ASSIGNEES[0], status: 'Proses Cek', date: today };
+    if (type === 'Notulensi') return { author: ASSIGNEES[0], date: today };
+    if (type === 'Jadwal') return { priority: 'Medium', category: 'Sosialisasi', date: today, ambassadornames: [] };
+    if (type === 'Performance') return { month: 'Jan', likes: 0, comments: 0, views: 0, shares: 0 };
+    return {};
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const type = modalType as ViewMode;
+    const tabName = type === 'Evidence' ? 'Evidence' : type === 'Notulensi' ? 'Minutes' : type === 'Jadwal' ? 'Schedules' : type;
+    
+    // Normalisasi kunci ke lowercase agar sesuai backend robust
+    const normalizedData: any = {};
+    Object.keys(formData).forEach(k => { normalizedData[k.toLowerCase()] = formData[k]; });
+    
+    const finalItem = { ...normalizedData, id: editingId || Date.now().toString() };
+    
+    setIsLoading(true);
+    try {
+      if (editingId) {
+        if (type === 'Content') setContentItems(p => p.map(i => i.id === editingId ? finalItem : i));
+        if (type === 'Evidence') setReportItems(p => p.map(i => i.id === editingId ? finalItem : i));
+        if (type === 'Notulensi') setMinutesItems(p => p.map(i => i.id === editingId ? finalItem : i));
+        if (type === 'Jadwal') setScheduleItems(p => p.map(i => i.id === editingId ? finalItem : i));
+        if (type === 'Performance') setPerformanceMetrics(p => p.map(i => i.id === editingId ? finalItem : i));
+        await updateSheetData(tabName, editingId, finalItem);
+      } else {
+        if (type === 'Content') setContentItems(p => [finalItem, ...p]);
+        if (type === 'Evidence') setReportItems(p => [finalItem, ...p]);
+        if (type === 'Notulensi') setMinutesItems(p => [finalItem, ...p]);
+        if (type === 'Jadwal') setScheduleItems(p => [finalItem, ...p]);
+        if (type === 'Performance') setPerformanceMetrics(p => [finalItem, ...p]);
+        await saveSheetData(tabName, finalItem);
       }
+      notify("Berhasil Disimpan", "success");
+    } catch (err) {
+      notify("Gagal Sinkron", "warning");
+    } finally {
+      setIsLoading(false);
+      setIsModalOpen(false);
+    }
+  };
 
-      if (month >= 0 && month < 12) {
-        dataByMonth[month]++;
-      }
-    });
+  const handleDelete = async (type: ViewMode, id: string) => {
+    if (!window.confirm("Hapus data ini dari Cloud?")) return;
+    const tabName = type === 'Evidence' ? 'Evidence' : type === 'Notulensi' ? 'Minutes' : type === 'Jadwal' ? 'Schedules' : type;
+    
+    setIsLoading(true);
+    try {
+      if (type === 'Content') setContentItems(p => p.filter(i => i.id !== id));
+      if (type === 'Evidence') setReportItems(p => p.filter(i => i.id !== id));
+      if (type === 'Notulensi') setMinutesItems(p => p.filter(i => i.id !== id));
+      if (type === 'Jadwal') setScheduleItems(p => p.filter(i => i.id !== id));
+      // Fixed: Removed 'as any' since id is now part of SocialMetric interface
+      if (type === 'Performance') setPerformanceMetrics(p => p.filter(i => i.id !== id));
+      await deleteSheetData(tabName, id);
+      notify("Data Terhapus", "success");
+    } catch (err) {
+      notify("Gagal Hapus", "warning");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    return dataByMonth;
-  }, [contentItems, reportItems, minutesItems, scheduleItems]);
+  const handleAiOptimize = async () => {
+    if (!formData.title) return notify("Judul diperlukan untuk AI", "warning");
+    setIsAiWorking(true);
+    try {
+      const optimized = await optimizeCaption(formData.title, formData.caption || "", formData.platform || "Instagram");
+      setFormData({ ...formData, caption: optimized });
+      notify("Caption Dioptimasi AI", "success");
+    } catch (e) {
+      notify("AI Error", "warning");
+    } finally {
+      setIsAiWorking(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, key: string) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setFormData({ ...formData, [key]: reader.result as string });
+        notify("File siap di-upload ke Drive", "info");
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handlePersonnelToggle = (name: string) => {
+    const current = Array.isArray(formData.ambassadornames) ? formData.ambassadornames : 
+                     (typeof formData.ambassadornames === 'string' && formData.ambassadornames !== "" ? formData.ambassadornames.split(', ') : []);
+    
+    const updated = current.includes(name) ? current.filter(n => n !== name) : [...current, name];
+    setFormData({ ...formData, ambassadornames: updated });
+  };
 
   const filteredData = useMemo(() => {
-    const query = searchQuery.toLowerCase();
-    if (viewMode === 'Content') {
-      return contentItems.filter(item => {
-        const matchesStatus = activeTab === 'All' || item.status === activeTab;
-        const matchesSearch = item.title.toLowerCase().includes(query) || item.caption.toLowerCase().includes(query);
-        return matchesStatus && matchesSearch;
-      });
-    } else if (viewMode === 'Evidence') {
-      return reportItems.filter(item => {
-        const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-        const matchesSearch = item.activityTitle.toLowerCase().includes(query);
-        return matchesCategory && matchesSearch;
-      });
-    } else if (viewMode === 'Notulensi') {
-      return minutesItems.filter(item => item.title.toLowerCase().includes(query));
-    } else if (viewMode === 'Absensi') {
-      return attendanceLogs.filter(log => log.name.toLowerCase().includes(query));
-    } else if (viewMode === 'Jadwal') {
-      return scheduleItems.filter(item =>
-        item.ambassadorNames.some(name => name.toLowerCase().includes(query)) ||
-        item.taskTitle.toLowerCase().includes(query)
-      );
-    } else if (viewMode === 'Members') {
-      return AMBASSADOR_PROFILES.filter(member =>
-        member.name.toLowerCase().includes(query) ||
-        member.major.toLowerCase().includes(query)
-      );
-    }
+    const q = searchQuery.toLowerCase();
+    if (viewMode === 'Content') return contentItems.filter(i => (i.title || '').toLowerCase().includes(q));
+    if (viewMode === 'Evidence') return reportItems.filter(i => (i.activityTitle || '').toLowerCase().includes(q));
+    if (viewMode === 'Notulensi') return minutesItems.filter(i => (i.title || '').toLowerCase().includes(q));
+    if (viewMode === 'Jadwal') return scheduleItems.filter(i => (i.taskTitle || '').toLowerCase().includes(q));
+    if (viewMode === 'Performance') return performanceMetrics;
+    if (viewMode === 'Members') return AMBASSADOR_PROFILES.filter(m => (m.name || '').toLowerCase().includes(q));
     return [];
-  }, [viewMode, contentItems, reportItems, minutesItems, attendanceLogs, scheduleItems, activeTab, searchQuery, selectedCategory]);
-
-  const handleStatusChange = (id: string, newStatus: ContentStatus) => {
-    setContentItems(prev => prev.map(item => item.id === id ? { ...item, status: newStatus } : item));
-    notify(`Status: ${newStatus}`, "info");
-  };
-
-  const handleAddContent = (e: React.FormEvent) => {
-    e.preventDefault();
-    const item: ContentItem = {
-      id: Date.now().toString(),
-      title: newContent.title || 'Untitled',
-      platform: (newContent.platform as Platform) || 'Instagram',
-      status: ContentStatus.IDEATION,
-      assignee: newContent.assignee || ASSIGNEES[0],
-      postDate: new Date().toISOString().split('T')[0],
-      deadline: newContent.deadline || new Date().toISOString().split('T')[0],
-      caption: '', driveLink: '#', thumbnailLink: `https://picsum.photos/seed/${Math.random()}/400/225`, notes: ''
-    };
-    setContentItems([item, ...contentItems]);
-    setIsAddingContent(false);
-    setNewContent(initialContentState);
-    notify("Konten dijadwalkan", "success");
-  };
-
-  const handleAddReport = (e: React.FormEvent) => {
-    e.preventDefault();
-    const item: WeeklyReport = {
-      id: Date.now().toString(),
-      activityTitle: newReport.activityTitle || 'Kegiatan',
-      category: (newReport.category as ActivityCategory) || 'Sosialisasi',
-      description: newReport.description || '',
-      ambassadorName: newReport.ambassadorName || ASSIGNEES[0],
-      date: new Date().toISOString().split('T')[0],
-      proofUrl: `https://picsum.photos/seed/${Math.random()}/800/600`,
-      pdfUrl: newReport.pdfUrl || ''
-    };
-    setReportItems([item, ...reportItems]);
-    setIsAddingReport(false);
-    setNewReport(initialReportState);
-    notify("Laporan progres tersimpan", "success");
-  };
-
-  const handleAddMinute = (e: React.FormEvent) => {
-    e.preventDefault();
-    const item: MeetingMinute = {
-      id: Date.now().toString(),
-      date: new Date().toISOString().split('T')[0],
-      title: newMinute.title || 'Rapat',
-      summary: newMinute.summary || '',
-      attendees: [],
-      fileLink: newMinute.fileLink || '#',
-      author: newMinute.author || ASSIGNEES[0]
-    };
-    setMinutesItems([item, ...minutesItems]);
-    setIsAddingMinutes(false);
-    setNewMinute(initialMinuteState);
-    notify("Notulensi disimpan", "success");
-  };
-
-  const handleAddPerformance = (e: React.FormEvent) => {
-    e.preventDefault();
-    const exists = performanceMetrics.find(m => m.month === newMetric.month);
-    if (exists) {
-      setPerformanceMetrics(prev => prev.map(m => m.month === newMetric.month ? { ...newMetric } : m));
-      notify(`Update performa ${newMetric.month} berhasil`, "success");
-    } else {
-      setPerformanceMetrics(prev => {
-        const updated = [...prev, newMetric];
-        return updated.sort((a, b) => MONTH_LABELS.indexOf(a.month) - MONTH_LABELS.indexOf(b.month));
-      });
-      notify(`Data performa ${newMetric.month} ditambahkan`, "success");
-    }
-    setIsAddingPerformance(false);
-    setNewMetric(initialPerformanceState);
-  };
-
-  const handleAddSchedule = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSchedule.ambassadorNames || newSchedule.ambassadorNames.length === 0) {
-      notify("Pilih minimal satu duta", "warning");
-      return;
-    }
-    const item: ScheduleAssignment = {
-      id: Date.now().toString(),
-      ambassadorNames: newSchedule.ambassadorNames,
-      taskTitle: newSchedule.taskTitle || 'Untitled Task',
-      description: newSchedule.description || '',
-      date: newSchedule.date || new Date().toISOString().split('T')[0],
-      priority: (newSchedule.priority as any) || 'Medium'
-    };
-    setScheduleItems([item, ...scheduleItems]);
-    setIsAddingSchedule(false);
-    setNewSchedule(initialScheduleState);
-    notify("Jadwal penugasan berhasil dibuat", "success");
-  };
-
-  const runAiStudio = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsAiLoading(true);
-    try {
-      const result = await optimizeCaption(aiForm.title, aiForm.draft, aiForm.platform);
-      setAiResult(result);
-    } catch (err) {
-      notify("AI Processing Error", "warning");
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
-  // Fixed order based on operational urgency
-  const NavItems = [
-    { id: 'Dashboard', label: 'Dashboard', icon: 'fa-house' },
-    { id: 'Jadwal', label: 'Jadwal', icon: 'fa-calendar-check' },
-    { id: 'Absensi', label: 'Absensi', icon: 'fa-fingerprint' },
-    { id: 'Content', label: 'Konten', icon: 'fa-clapperboard' },
-    { id: 'Evidence', label: 'Laporan', icon: 'fa-file-signature' },
-    { id: 'Notulensi', label: 'Notulen', icon: 'fa-book' },
-    { id: 'Performance', label: 'Performa', icon: 'fa-chart-line' },
-    { id: 'Members', label: 'Anggota', icon: 'fa-users' },
-  ];
-
-  const PromoCards = [
-    { title: 'AI Copywriting', desc: 'Optimasi Gemini', icon: 'fa-magic', color: 'bg-blue-500/20', action: () => setIsAiToolOpen(true) },
-    { title: 'Production Flow', desc: 'Status Produksi', icon: 'fa-tasks', color: 'bg-indigo-500/20', action: () => setIsProdFlowOpen(true) },
-    { title: 'Proof of Work', desc: 'Validasi Laporan', icon: 'fa-check-double', color: 'bg-cyan-500/20', action: () => setIsProofOfWorkOpen(true) },
-  ];
+  }, [viewMode, contentItems, reportItems, minutesItems, scheduleItems, performanceMetrics, searchQuery]);
 
   return (
-    <div className="min-h-screen flex bg-[#111314]">
-      {/* Sidebar Rail (Desktop) */}
-      <aside className="sidebar-rail hidden md:flex">
-        <div className="w-10 h-10 bg-[#a8c7fa] rounded-full flex items-center justify-center text-black mb-8 shadow-lg">
-          <i className="fas fa-cubes"></i>
+    <div className={`min-h-screen flex bg-[var(--g-bg)] text-[var(--g-on-surface)] ${theme === 'light' ? 'light-mode' : ''}`}>
+      {isLoading && (
+        <div className="fixed inset-0 z-[5000] bg-[var(--g-bg)]/80 backdrop-blur-sm flex items-center justify-center">
+          <div className="w-12 h-12 border-4 border-[var(--g-primary)]/20 border-t-[var(--g-primary)] rounded-full animate-spin"></div>
         </div>
-        {NavItems.map(item => (
-          <div
-            key={item.id}
-            onClick={() => { setViewMode(item.id as ViewMode); setActiveTab('All'); setSelectedCategory('All'); setSearchQuery(''); }}
-            className={`sidebar-item ${viewMode === item.id ? 'active' : ''}`}
-          >
+      )}
+
+      {/* Sidebar Rail */}
+      <aside className="sidebar-rail hidden md:flex">
+        <div className="w-10 h-10 bg-[var(--g-primary)] rounded-xl flex items-center justify-center text-black mb-8 shadow-lg">
+          <i className="fas fa-cubes text-lg"></i>
+        </div>
+        {[
+          { id: 'Dashboard', label: 'Home', icon: 'fa-house' },
+          { id: 'Jadwal', label: 'Jadwal', icon: 'fa-calendar-check' },
+          { id: 'Absensi', label: 'Absen', icon: 'fa-fingerprint' },
+          { id: 'Content', label: 'Konten', icon: 'fa-clapperboard' },
+          { id: 'Evidence', label: 'Laporan', icon: 'fa-file-signature' },
+          { id: 'Notulensi', label: 'Notulen', icon: 'fa-book' },
+          { id: 'Performance', label: 'Stats', icon: 'fa-chart-line' },
+          { id: 'Members', label: 'Team', icon: 'fa-users' },
+        ].map(item => (
+          <div key={item.id} onClick={() => setViewMode(item.id as ViewMode)} className={`sidebar-item ${viewMode === item.id ? 'active' : ''}`}>
             <i className={`fas ${item.icon}`}></i>
             <span>{item.label}</span>
           </div>
         ))}
       </aside>
 
-      {/* Main Container */}
-      <div className="flex-1 main-content-wrapper md:pl-[72px] flex flex-col min-w-0 pb-24 md:pb-0">
+      <div className="flex-1 md:pl-[72px] flex flex-col min-w-0">
         <header className="top-bar">
-          <div className="hidden sm:flex items-center gap-4 min-w-[150px]">
-            <span className="text-lg font-medium text-[#e3e3e3]">Creative <span className="text-[#a8c7fa] font-bold">Flow</span></span>
+          <div className="hidden lg:flex font-black text-xl tracking-tighter">Creative<span className="text-[var(--g-primary)]">Flow</span></div>
+          <div className="search-pill flex-1 mx-4">
+            <i className="fas fa-search text-[var(--g-on-surface-variant)] text-xs"></i>
+            <input type="text" placeholder={`Cari di ${viewMode}...`} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
-          <div className="search-pill flex-1 max-w-[720px]">
-            <i className="fas fa-search text-[#c4c7c5] ml-1"></i>
-            <input
-              type="text"
-              placeholder={`Cari di ${viewMode.toLowerCase()}...`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-4 justify-end min-w-[50px]">
-            <div className="w-8 h-8 rounded-full bg-[#a8c7fa] text-black flex items-center justify-center font-bold text-xs">AD</div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => syncAllData()} 
+              disabled={isLoading}
+              className={`w-9 h-9 rounded-xl border border-[var(--g-border)] flex items-center justify-center transition-all ${isLoading ? 'opacity-50' : 'hover:bg-[var(--g-surface-variant)]'}`}
+              title="Refresh Data"
+            >
+              <i className={`fas fa-sync-alt text-xs ${isLoading ? 'animate-spin' : ''}`}></i>
+            </button>
+            <button 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} 
+              className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all duration-500 ${
+                theme === 'dark' 
+                  ? 'border-[var(--g-border)] bg-[var(--g-surface)] text-yellow-400 hover:bg-[var(--g-surface-variant)] hover:scale-105' 
+                  : 'border-blue-200 bg-white text-blue-600 hover:bg-blue-50 hover:scale-105 shadow-[0_2px_10px_-3px_rgba(37,99,235,0.2)]'
+              }`}
+              title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            >
+              <i className={`fas ${theme === 'dark' ? 'fa-sun' : 'fa-moon'} text-sm ${theme === 'dark' ? 'animate-pulse' : ''}`}></i>
+            </button>
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[8px] font-black uppercase tracking-widest ${isCloudConnected ? 'border-green-500/20 text-green-500 bg-green-500/5' : 'border-red-500/20 text-red-500 bg-red-500/5'}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${isCloudConnected ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+              {isCloudConnected ? 'Cloud Active' : 'Offline'}
+            </div>
           </div>
         </header>
 
-        <main className="px-4 sm:px-12 py-6 max-w-[1600px] mx-auto w-full">
-          {/* Action Bar */}
-          <div className="flex items-center gap-2 mb-8 overflow-x-auto no-scrollbar pb-2">
-            {viewMode === 'Content' && ['All', ...Object.values(ContentStatus)].map(stat => (
-              <button key={stat} onClick={() => setActiveTab(stat as any)} className={`px-4 py-2 border rounded-full text-xs font-medium whitespace-nowrap transition-all ${activeTab === stat ? 'bg-[#a8c7fa] text-black border-transparent shadow-lg' : 'border-[#303134] text-[#c4c7c5] hover:border-white/20'}`}>
-                {stat === 'All' ? 'Semua' : stat}
-              </button>
-            ))}
-            {viewMode === 'Evidence' && ['All', 'Sosialisasi', 'Pelayanan Admisi', 'Produksi Konten', 'Event Kampus'].map(cat => (
-              <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-2 border rounded-full text-xs font-medium whitespace-nowrap transition-all ${selectedCategory === cat ? 'bg-[#a8c7fa] text-black border-transparent' : 'border-[#303134] text-[#c4c7c5] hover:border-white/20'}`}>
-                {cat}
-              </button>
-            ))}
-            {viewMode !== 'Absensi' && viewMode !== 'Dashboard' && viewMode !== 'Members' && (
-              <button
-                onClick={() => {
-                  if (viewMode === 'Content') setIsAddingContent(true);
-                  if (viewMode === 'Evidence') setIsAddingReport(true);
-                  if (viewMode === 'Notulensi') setIsAddingMinutes(true);
-                  if (viewMode === 'Performance') setIsAddingPerformance(true);
-                  if (viewMode === 'Jadwal') setIsAddingSchedule(true);
-                }}
-                className="ml-auto flex items-center gap-2 bg-[#a8c7fa] text-black px-6 py-2.5 rounded-full font-bold text-xs shadow-lg hover:brightness-110 active:scale-95 transition-all shrink-0"
-              >
-                <i className="fas fa-plus"></i> TAMBAH
+        <main className="px-4 sm:px-10 py-8 max-w-[1440px] mx-auto w-full pb-24">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-3xl font-black uppercase tracking-tight">{viewMode}</h2>
+            {['Content', 'Evidence', 'Notulensi', 'Jadwal', 'Performance'].includes(viewMode) && (
+              <button onClick={() => openAddModal(viewMode as ViewMode)} className="bg-[var(--g-primary)] text-black px-6 py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2">
+                <i className="fas fa-plus"></i> TAMBAH {viewMode}
               </button>
             )}
           </div>
 
-          {/* Dashboard Focus Section */}
-          {viewMode === 'Dashboard' && (
-            <div className="flex gap-4 overflow-x-auto no-scrollbar mb-8">
-              {PromoCards.map((card, idx) => (
-                <div key={idx} className="promo-card group shrink-0 hover:bg-[#282a2c] transition-all" onClick={card.action}>
-                  <div className="max-w-[180px]">
-                    <h4 className="font-semibold text-[#e3e3e3] text-sm mb-1">{card.title}</h4>
-                    <p className="text-[10px] text-[#c4c7c5] leading-tight">{card.desc}</p>
-                  </div>
-                  <div className={`w-10 h-10 ${card.color} rounded-xl flex items-center justify-center text-[#a8c7fa] group-hover:scale-110 transition-transform ml-6`}>
-                    <i className={`fas ${card.icon} text-sm`}></i>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="grid grid-cols-1 gap-6">
+            {viewMode === 'Dashboard' && <DashboardView stats={{
+              content: contentItems.length,
+              evidence: reportItems.filter(r => r.status === 'Tervalidasi').length,
+              minutes: minutesItems.length,
+              schedule: scheduleItems.length,
+              attendance: attendanceLogs.length,
+              completedSchedules: 0
+            }} trendData={performanceMetrics.map(p => p.views / 1000)} performance={performanceMetrics} />}
 
-          {/* Data List Section */}
-          <div className="space-y-0">
-            {viewMode === 'Dashboard' && (
-              <DashboardView
-                stats={{
-                  content: contentItems.length,
-                  evidence: reportItems.length,
-                  minutes: minutesItems.length,
-                  schedule: scheduleItems.length
-                }}
-                trendData={dashboardTrendData}
-                performance={performanceMetrics}
-              />
-            )}
-            {viewMode === 'Members' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500 pb-12">
-                {filteredData.map((member, idx) => (
-                  <MemberCard key={idx} member={member as AmbassadorProfile} />
-                ))}
-              </div>
-            )}
-            {viewMode === 'Content' && filteredData.map(item => (
-              <div key={item.id} className="font-entry"><ContentCard item={item as ContentItem} onStatusChange={handleStatusChange} /></div>
+            {viewMode === 'Content' && filteredData.map((item: any) => (
+              <ContentCard key={item.id} item={item} onStatusChange={async (id, s) => {
+                setContentItems(p => p.map(i => i.id === id ? {...i, status: s} : i));
+                await updateSheetData('Content', id, { status: s });
+              }} onDelete={(id) => handleDelete('Content', id)} onEdit={(it) => openEditModal('Content', it)} />
             ))}
-            {viewMode === 'Evidence' && filteredData.map(report => (
-              <div key={report.id} className="font-entry"><EvidenceCard evidence={report as WeeklyReport} /></div>
+
+            {viewMode === 'Evidence' && filteredData.map((item: any) => (
+              <EvidenceCard key={item.id} evidence={item} onStatusChange={async (id, s) => {
+                setReportItems(p => p.map(i => i.id === id ? {...i, status: s} : i));
+                await updateSheetData('Evidence', id, { status: s });
+              }} onDelete={(id) => handleDelete('Evidence', id)} onEdit={(it) => openEditModal('Evidence', it)} />
             ))}
-            {viewMode === 'Notulensi' && filteredData.map(item => (
-              <div key={item.id} className="font-entry"><NotulensiCard item={item as MeetingMinute} /></div>
+
+            {viewMode === 'Jadwal' && filteredData.map((item: any) => (
+              <ScheduleCard key={item.id} item={item} onEdit={(it) => openEditModal('Jadwal', it)} onDelete={(id) => handleDelete('Jadwal', id)} />
             ))}
-            {viewMode === 'Jadwal' && filteredData.map(item => (
-              <div key={item.id} className="font-entry"><ScheduleCard item={item as ScheduleAssignment} /></div>
+
+            {viewMode === 'Absensi' && <AttendanceModule onSave={async (r) => { setAttendanceLogs(p => [r, ...p]); await saveSheetData('Attendance', r); }} logs={attendanceLogs} />}
+
+            {viewMode === 'Notulensi' && filteredData.map((item: any) => (
+              <NotulensiCard key={item.id} item={item} onEdit={(it) => openEditModal('Notulensi', it)} onDelete={(id) => handleDelete('Notulensi', id)} />
             ))}
+
             {viewMode === 'Performance' && (
-              <div className="space-y-12 pb-12">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="p-6 bg-[#1a1c1e] rounded-2xl border border-[#303134] shadow-xl">
-                    <p className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest mb-2">Total Yearly Views</p>
-                    <p className="text-4xl font-light text-[#a8c7fa]">{(performanceMetrics.reduce((a, b) => a + b.views, 0) / 1000).toFixed(1)}K</p>
-                  </div>
-                  <div className="p-6 bg-[#1a1c1e] rounded-2xl border border-[#303134] shadow-xl">
-                    <p className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest mb-2">Total Engagement</p>
-                    <p className="text-4xl font-light text-[#c6a8fa]">{(performanceMetrics.reduce((a, b) => a + b.likes + b.comments, 0) / 1000).toFixed(1)}K</p>
-                  </div>
-                  <div className="p-6 bg-[#1a1c1e] rounded-2xl border border-[#303134] shadow-xl">
-                    <p className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest mb-2">Total Shares</p>
-                    <p className="text-4xl font-light text-[#fae2a8]">{performanceMetrics.reduce((a, b) => a + b.shares, 0)}</p>
-                  </div>
-                </div>
-                <div className="space-y-6">
-                  <h3 className="text-sm font-black text-[#e3e3e3] uppercase tracking-[0.2em] border-l-4 border-[#a8c7fa] pl-4">Monthly Social Analytics Breakdown</h3>
-                  <div className="grid grid-cols-1 gap-4">
-                    {performanceMetrics.map(m => (
-                      <SocialMetricCard key={m.month} metric={m} />
-                    ))}
-                  </div>
-                </div>
+              <div className="grid grid-cols-1 gap-4">
+                 {performanceMetrics.map((item: any, idx) => (
+                    <SocialMetricCard key={idx} metric={item} />
+                 ))}
               </div>
             )}
-            {viewMode === 'Absensi' && (
-              <div className="py-4 max-w-4xl mx-auto">
-                <AttendanceModule onSave={(rec) => setAttendanceLogs([rec, ...attendanceLogs])} />
-              </div>
-            )}
-            {filteredData.length === 0 && viewMode !== 'Absensi' && viewMode !== 'Performance' && viewMode !== 'Dashboard' && (
-              <div className="py-24 text-center">
-                <div className="w-16 h-16 bg-[#1a1c1e] rounded-full flex items-center justify-center text-[#303134] mx-auto mb-4 border border-[#303134]">
-                  <i className="fas fa-ghost text-xl"></i>
-                </div>
-                <p className="text-[#c4c7c5] text-sm font-medium">Data belum tersedia untuk filter ini.</p>
+
+            {viewMode === 'Members' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredData.map((m: any, i: number) => <MemberCard key={i} member={m} />)}
               </div>
             )}
           </div>
         </main>
       </div>
 
-      {/* Mobile Nav */}
-      <nav className="bottom-nav md:hidden">
-        {NavItems.map(item => (
-          <div
-            key={item.id}
-            onClick={() => { setViewMode(item.id as ViewMode); setActiveTab('All'); setSelectedCategory('All'); setSearchQuery(''); }}
-            className={`bottom-nav-item ${viewMode === item.id ? 'active' : ''}`}
-          >
-            <i className={`fas ${item.icon}`}></i>
-            <span>{item.label}</span>
-          </div>
-        ))}
-      </nav>
-
-      {/* Shared Modals Container */}
-      {(isAddingContent || isAddingReport || isAddingMinutes || isAddingPerformance || isAddingSchedule || isAiToolOpen || isProdFlowOpen || isProofOfWorkOpen) && (
-        <div className="fixed inset-0 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => {
-            setIsAddingContent(false); setIsAddingReport(false); setIsAddingMinutes(false);
-            setIsAddingPerformance(false); setIsAddingSchedule(false); setIsAiToolOpen(false); setIsProdFlowOpen(false); setIsProofOfWorkOpen(false);
-          }}></div>
-          <div className="bg-[#1a1c1e] w-full sm:max-w-xl rounded-t-3xl sm:rounded-2xl border-t sm:border border-[#303134] shadow-2xl z-10 overflow-hidden flex flex-col max-h-[95vh] animate-in slide-in-from-bottom-5 duration-300">
-            <div className="px-6 py-5 border-b border-[#303134] flex justify-between items-center bg-[#1a1c1e] sticky top-0">
-              <h2 className="text-lg font-bold text-white">
-                {isAddingContent ? '✨ Tambah Konten' : isAddingReport ? '📋 Laporan Progres' : isAddingMinutes ? '📝 Catat Notulensi' : isAddingPerformance ? '📊 Input Performa' : isAddingSchedule ? '📅 Buat Penugasan' : 'Insight Panel'}
-              </h2>
-              <button onClick={() => {
-                setIsAddingContent(false); setIsAddingReport(false); setIsAddingMinutes(false);
-                setIsAddingPerformance(false); setIsAddingSchedule(false); setIsAiToolOpen(false); setIsProdFlowOpen(false); setIsProofOfWorkOpen(false);
-              }} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/10 text-[#c4c7c5] transition-colors"><i className="fas fa-times"></i></button>
+      {/* CRUD MODAL */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[4000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl">
+          <div className="bg-[var(--g-surface)] w-full max-w-xl rounded-[32px] border border-[var(--g-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-8 py-6 border-b border-[var(--g-border)] flex justify-between items-center bg-[var(--g-surface-variant)]">
+              <h3 className="font-black text-sm uppercase tracking-[0.2em]">{editingId ? 'Edit' : 'Tambah'} {modalType}</h3>
+              <button onClick={() => setIsModalOpen(false)} className="w-10 h-10 rounded-full hover:bg-black/10 flex items-center justify-center"><i className="fas fa-times"></i></button>
             </div>
-
-            <div className="p-6 overflow-y-auto no-scrollbar bg-[#1a1c1e]">
-
-              {isAddingContent && (
-                <form onSubmit={handleAddContent} className="space-y-5 pb-8">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest ml-1">Nama Konten</label>
-                    <input required className="google-input w-full p-4 text-sm" placeholder="Judul..." onChange={e => setNewContent({ ...newContent, title: e.target.value })} />
-                  </div>
+            
+            <form onSubmit={handleSubmit} className="p-8 overflow-y-auto space-y-6 custom-scrollbar">
+              {modalType === 'Content' && (
+                <>
+                  <input required className="google-input w-full" placeholder="Judul Konten" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} />
                   <div className="grid grid-cols-2 gap-4">
-                    <select className="google-input w-full p-4 text-sm" onChange={e => setNewContent({ ...newContent, platform: e.target.value as any })}>
-                      <option>Instagram</option><option>TikTok</option><option>YouTube</option>
-                    </select>
-                    <input type="date" className="google-input w-full p-4 text-sm" onChange={e => setNewContent({ ...newContent, deadline: e.target.value })} />
+                    <select className="google-input w-full" value={formData.platform} onChange={e => setFormData({...formData, platform: e.target.value})}><option>Instagram</option><option>TikTok</option><option>YouTube</option></select>
+                    <select className="google-input w-full" value={formData.assignee} onChange={e => setFormData({...formData, assignee: e.target.value})}>{ASSIGNEES.map(a => <option key={a}>{a.split(' (')[0]}</option>)}</select>
                   </div>
-                  <select className="google-input w-full p-4 text-sm" onChange={e => setNewContent({ ...newContent, assignee: e.target.value })}>
-                    {ASSIGNEES.map(a => <option key={a} value={a}>{a.split(' (')[0]}</option>)}
-                  </select>
-                  <button type="submit" className="w-full bg-[#a8c7fa] text-black py-4 rounded-2xl font-black text-sm shadow-xl transition-all">SIMPAN DATA</button>
-                </form>
-              )}
-
-              {isAddingReport && (
-                <form onSubmit={handleAddReport} className="space-y-5 pb-8">
-                  <input required className="google-input w-full p-4 text-sm" placeholder="Nama Kegiatan..." onChange={e => setNewReport({ ...newReport, activityTitle: e.target.value })} />
-                  <select className="google-input w-full p-4 text-sm" onChange={e => setNewReport({ ...newReport, category: e.target.value as any })}>
-                    <option>Sosialisasi</option><option>Pelayanan Admisi</option><option>Produksi Konten</option><option>Event Kampus</option>
-                  </select>
-                  <textarea required className="google-input w-full p-4 text-sm" rows={4} placeholder="Deskripsi progres..." onChange={e => setNewReport({ ...newReport, description: e.target.value })}></textarea>
+                  <div className="relative">
+                    <textarea className="google-input w-full" rows={6} placeholder="Caption" value={formData.caption || ''} onChange={e => setFormData({...formData, caption: e.target.value})}></textarea>
+                    <button 
+                      type="button" 
+                      onClick={handleAiOptimize} 
+                      disabled={isAiWorking}
+                      className="absolute bottom-3 right-3 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-2 hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {isAiWorking ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-wand-sparkles"></i>}
+                      {isAiWorking ? 'AI WORKING...' : 'AI OPTIMIZE'}
+                    </button>
+                  </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest ml-1">Lampiran Laporan (PDF)</label>
-                    <div className="flex items-center gap-4 p-4 bg-[#111314] rounded-2xl border border-[#303134] hover:border-[#a8c7fa]/50 transition-colors cursor-pointer">
-                      <i className="fas fa-file-pdf text-red-400 text-xl"></i>
-                      <input
-                        type="file"
-                        accept="application/pdf"
-                        className="text-[11px] text-[#c4c7c5] file:hidden"
-                        onChange={(e) => {
-                          if (e.target.files?.[0]) {
-                            setNewReport({ ...newReport, pdfUrl: URL.createObjectURL(e.target.files[0]) });
-                          }
-                        }}
-                      />
-                      <span className="text-[11px] font-bold text-[#c4c7c5]">Klik untuk upload PDF Formal</span>
-                    </div>
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Drive Link Assets (Opsional):</label>
+                    <input className="google-input w-full" placeholder="https://drive.google.com/..." value={formData.drivelink || ''} onChange={e => setFormData({...formData, drivelink: e.target.value})} />
                   </div>
-                  <button type="submit" className="w-full bg-[#a8c7fa] text-black py-4 rounded-2xl font-black text-sm shadow-xl transition-all">SUBMIT LAPORAN</button>
-                </form>
+                </>
               )}
 
-              {isAddingSchedule && (
-                <form onSubmit={handleAddSchedule} className="space-y-5 pb-8">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest ml-1">Pilih Duta (Tim Penanggung Jawab)</label>
-                    <div className="max-h-48 overflow-y-auto bg-[#111314] rounded-xl border border-[#303134] p-2 space-y-1 no-scrollbar">
-                      {ASSIGNEES.map(a => (
-                        <label key={a} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors group">
-                          <input
-                            type="checkbox"
-                            checked={newSchedule.ambassadorNames?.includes(a)}
-                            onChange={(e) => {
-                              const names = newSchedule.ambassadorNames || [];
-                              if (e.target.checked) {
-                                setNewSchedule({ ...newSchedule, ambassadorNames: [...names, a] });
-                              } else {
-                                setNewSchedule({ ...newSchedule, ambassadorNames: names.filter(n => n !== a) });
-                              }
-                            }}
-                            className="w-4 h-4 rounded border-[#303134] bg-transparent text-[#a8c7fa] focus:ring-[#a8c7fa] focus:ring-offset-0"
-                          />
-                          <span className="text-xs text-[#c4c7c5] group-hover:text-white transition-colors">{a.split(' (')[0]}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <input required className="google-input w-full p-4 text-sm" placeholder="Judul Tugas/Jadwal..." onChange={e => setNewSchedule({ ...newSchedule, taskTitle: e.target.value })} />
-                  <textarea className="google-input w-full p-4 text-sm" rows={3} placeholder="Detail penugasan (opsional)..." onChange={e => setNewSchedule({ ...newSchedule, description: e.target.value })}></textarea>
+              {modalType === 'Jadwal' && (
+                <>
+                  <input required className="google-input w-full" placeholder="Judul Tugas" value={formData.tasktitle || ''} onChange={e => setFormData({...formData, tasktitle: e.target.value})} />
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest ml-1">Tanggal Pelaksanaan</label>
-                      <input type="date" required className="google-input w-full p-4 text-sm" value={newSchedule.date} onChange={e => setNewSchedule({ ...newSchedule, date: e.target.value })} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest ml-1">Prioritas</label>
-                      <select className="google-input w-full p-4 text-sm" onChange={e => setNewSchedule({ ...newSchedule, priority: e.target.value as any })}>
-                        <option>Low</option><option selected>Medium</option><option>High</option>
-                      </select>
-                    </div>
+                    <input type="date" className="google-input w-full" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})} />
+                    <select className="google-input w-full" value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value})}><option>Low</option><option>Medium</option><option>High</option></select>
                   </div>
-                  <button type="submit" className="w-full bg-[#a8c7fa] text-black py-4 rounded-2xl font-black text-sm shadow-xl transition-all">BUAT JADWAL</button>
-                </form>
-              )}
-
-              {isAddingPerformance && (
-                <form onSubmit={handleAddPerformance} className="space-y-5 pb-8">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-[#c4c7c5] uppercase tracking-widest ml-1">Pilih Bulan</label>
-                    <select required className="google-input w-full p-4 text-sm" value={newMetric.month} onChange={e => setNewMetric({ ...newMetric, month: e.target.value })}>
-                      {MONTH_LABELS.map(m => <option key={m} value={m}>{m}</option>)}
+                  
+                  <div className="grid grid-cols-1 gap-4">
+                    <select className="google-input w-full" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                      <option>Sosialisasi</option>
+                      <option>Pelayanan Admisi</option>
+                      <option>Produksi Konten</option>
+                      <option>Event Kampus</option>
+                      <option>Lainnya</option>
                     </select>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <input type="number" required className="google-input w-full p-4 text-sm" placeholder="Views" onChange={e => setNewMetric({ ...newMetric, views: parseInt(e.target.value) || 0 })} />
-                    <input type="number" required className="google-input w-full p-4 text-sm" placeholder="Likes" onChange={e => setNewMetric({ ...newMetric, likes: parseInt(e.target.value) || 0 })} />
-                  </div>
-                  <button type="submit" className="w-full bg-[#a8c7fa] text-black py-4 rounded-2xl font-black text-sm shadow-xl transition-all">SIMPAN PERFORMA</button>
-                </form>
-              )}
-
-              {isAiToolOpen && (
-                <div className="space-y-6">
-                  {!aiResult ? (
-                    <form onSubmit={runAiStudio} className="space-y-4">
-                      <input required className="google-input w-full p-4 text-sm" placeholder="Judul Konten" onChange={e => setAiForm({ ...aiForm, title: e.target.value })} />
-                      <textarea required className="google-input w-full p-4 text-sm" rows={3} placeholder="Apa inti pesan konten Anda?" onChange={e => setAiForm({ ...aiForm, draft: e.target.value })}></textarea>
-                      <button disabled={isAiLoading} type="submit" className="w-full bg-[#a8c7fa] text-black py-4 rounded-2xl font-black flex items-center justify-center gap-2">
-                        {isAiLoading ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-sparkles"></i>}
-                        OPTIMASI DENGAN GEMINI
-                      </button>
-                    </form>
-                  ) : (
-                    <div className="space-y-4 animate-in fade-in">
-                      <div className="p-6 bg-[#111314] rounded-2xl border border-[#303134] text-sm leading-relaxed text-[#e3e3e3] whitespace-pre-wrap font-mono max-h-80 overflow-y-auto">
-                        {aiResult}
-                      </div>
-                      <div className="flex gap-3">
-                        <button onClick={() => setAiResult(null)} className="flex-1 py-4 border border-[#303134] rounded-2xl text-[#c4c7c5] font-black text-xs">ULANGI</button>
-                        <button onClick={() => { navigator.clipboard.writeText(aiResult); notify("Salin berhasil!", "success"); }} className="flex-1 py-4 bg-[#a8c7fa] text-black rounded-2xl font-black text-xs shadow-xl">SALIN HASIL</button>
-                      </div>
+                  
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Personel Bertugas (Pilih Lengkap):</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[220px] overflow-y-auto p-4 border border-[var(--g-border)] rounded-2xl bg-[var(--g-bg)]">
+                      {ASSIGNEES.map(name => {
+                        const isSelected = (Array.isArray(formData.ambassadornames) ? formData.ambassadornames : 
+                                           (typeof formData.ambassadornames === 'string' && formData.ambassadornames !== "" ? formData.ambassadornames.split(', ') : [])).includes(name);
+                        return (
+                          <label key={name} className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all cursor-pointer ${isSelected ? 'bg-[var(--g-primary-container)] border-[var(--g-primary)]/40' : 'bg-[var(--g-surface)] border-transparent'}`}>
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected} 
+                              onChange={() => handlePersonnelToggle(name)}
+                              className="w-4 h-4 rounded border-[var(--g-border)] bg-transparent text-[var(--g-primary)] focus:ring-0"
+                            />
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-[10px] font-bold truncate">{name.split(' (')[0]}</span>
+                              <span className="text-[8px] opacity-60 font-black">{name.includes('(') ? name.split('(')[1].replace(')', '') : 'ANGGOTA'}</span>
+                            </div>
+                          </label>
+                        );
+                      })}
                     </div>
-                  )}
-                </div>
+                  </div>
+                  
+                  <input className="google-input w-full" placeholder="Lokasi Penugasan" value={formData.location || ''} onChange={e => setFormData({...formData, location: e.target.value})} />
+                </>
               )}
 
-              {isProdFlowOpen && (
+              {modalType === 'Notulensi' && (
+                <>
+                  <input required className="google-input w-full" placeholder="Judul Rapat" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <input type="date" className="google-input w-full" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})} />
+                    <select className="google-input w-full" value={formData.author} onChange={e => setFormData({...formData, author: e.target.value})}>{ASSIGNEES.map(a => <option key={a}>{a.split(' (')[0]}</option>)}</select>
+                  </div>
+                  <textarea className="google-input w-full" rows={6} placeholder="Ringkasan Notulensi" value={formData.summary || ''} onChange={e => setFormData({...formData, summary: e.target.value})}></textarea>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Upload File Notulensi (PDF/Gambar):</label>
+                    <input type="file" accept="image/*,application/pdf" className="google-input w-full text-xs" onChange={e => handleFileChange(e, 'filelink')} />
+                    {formData.filelink && formData.filelink.startsWith('data:') && <p className="text-[8px] text-green-500 font-bold">FILE TERPILIH (SIAP UPLOAD)</p>}
+                    <input className="google-input w-full mt-2" placeholder="Atau tempel Link Drive..." value={formData.filelink && !formData.filelink.startsWith('data:') ? formData.filelink : ''} onChange={e => setFormData({...formData, filelink: e.target.value})} />
+                  </div>
+                </>
+              )}
+
+              {modalType === 'Evidence' && (
+                <>
+                  <input required className="google-input w-full" placeholder="Judul Kegiatan" value={formData.activitytitle || ''} onChange={e => setFormData({...formData, activitytitle: e.target.value})} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <select className="google-input w-full" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                      <option>Sosialisasi</option>
+                      <option>Pelayanan Admisi</option>
+                      <option>Produksi Konten</option>
+                      <option>Event Kampus</option>
+                      <option>Lainnya</option>
+                    </select>
+                    <select className="google-input w-full" value={formData.ambassadorname} onChange={e => setFormData({...formData, ambassadorname: e.target.value})}>{ASSIGNEES.map(a => <option key={a}>{a.split(' (')[0]}</option>)}</select>
+                  </div>
+                  <input type="date" className="google-input w-full" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})} />
+                  <textarea className="google-input w-full" rows={4} placeholder="Deskripsi Kegiatan" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})}></textarea>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Upload Bukti PDF/Gambar:</label>
+                    <input type="file" accept="image/*,application/pdf" className="google-input w-full text-xs" onChange={e => handleFileChange(e, 'pdfurl')} />
+                    {formData.pdfurl && <p className="text-[8px] text-green-500 font-bold">FILE TERPILIH (SIAP UPLOAD)</p>}
+                  </div>
+                </>
+              )}
+
+              {modalType === 'Performance' && (
                 <div className="space-y-4">
-                  <h3 className="text-xs font-black text-[#a8c7fa] uppercase tracking-widest mb-4">Statistik Alur Produksi</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    {WORKFLOW.map(w => (
-                      <div key={w.status} className="p-5 bg-[#111314] rounded-2xl border border-[#303134]">
-                        <p className="text-[9px] text-[#c4c7c5] font-black uppercase tracking-widest mb-1">{w.label}</p>
-                        <p className="text-3xl font-light text-white">{contentItems.filter(i => i.status === w.status).length}</p>
-                      </div>
-                    ))}
+                  <select className="google-input w-full" value={formData.month} onChange={e => setFormData({...formData, month: e.target.value})}>
+                    {['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'].map(m => <option key={m}>{m}</option>)}
+                  </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <input type="number" className="google-input w-full" placeholder="Views" value={formData.views || ''} onChange={e => setFormData({...formData, views: parseInt(e.target.value)})} />
+                    <input type="number" className="google-input w-full" placeholder="Likes" value={formData.likes || ''} onChange={e => setFormData({...formData, likes: parseInt(e.target.value)})} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <input type="number" className="google-input w-full" placeholder="Shares" value={formData.shares || ''} onChange={e => setFormData({...formData, shares: parseInt(e.target.value)})} />
+                    <input type="number" className="google-input w-full" placeholder="Comments" value={formData.comments || ''} onChange={e => setFormData({...formData, comments: parseInt(e.target.value)})} />
                   </div>
                 </div>
               )}
 
-              {isProofOfWorkOpen && (
-                <div className="space-y-8 text-center pb-8">
-                  <div className="w-24 h-24 bg-green-500/10 rounded-full flex items-center justify-center text-green-400 mx-auto border border-green-500/20 shadow-xl">
-                    <i className="fas fa-shield-check text-5xl"></i>
-                  </div>
-                  <div>
-                    <h3 className="text-3xl font-light text-white mb-2">{reportItems.length} Laporan Valid</h3>
-                    <p className="text-xs text-[#c4c7c5] font-black uppercase tracking-[0.3em]">Validated System Activity</p>
-                  </div>
-                  <button onClick={() => setIsProofOfWorkOpen(false)} className="w-full py-5 bg-[#a8c7fa] text-black rounded-2xl font-black text-sm shadow-xl uppercase tracking-widest">KEMBALI</button>
-                </div>
-              )}
-
-            </div>
+              <div className="pt-2">
+                <button type="submit" className="w-full py-5 bg-[var(--g-primary)] text-black rounded-2xl font-black uppercase text-xs tracking-[0.2em] shadow-2xl hover:brightness-110 active:scale-95 transition-all">
+                  {editingId ? 'SIMPAN PERUBAHAN' : 'TERBITKAN DATA'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Notifications Overlay */}
-      <div className="fixed bottom-28 md:bottom-10 right-4 sm:right-10 z-[3000] pointer-events-none flex flex-col gap-3">
+      <div className="fixed bottom-10 right-10 z-[3000] flex flex-col gap-3">
         {notifications.map(n => <Toast key={n.id} notification={n} onClose={removeNotification} />)}
       </div>
     </div>

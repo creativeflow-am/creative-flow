@@ -21,30 +21,23 @@ const MemberCard: React.FC<MemberCardProps> = ({ member }) => {
   };
 
   return (
-    <div className="bg-[#1a1c1e] p-6 rounded-2xl border border-[#303134] hover:border-[#a8c7fa]/40 transition-all group shadow-lg">
-      <div className="flex justify-between items-start mb-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 bg-[#a8c7fa]/10 rounded-2xl flex items-center justify-center text-[#a8c7fa] border border-[#a8c7fa]/20 shadow-inner">
+    <div className="bg-[var(--g-surface)] p-5 rounded-[20px] border border-[var(--g-border)] hover:border-[var(--g-primary)] transition-all group shadow-[var(--g-shadow)] h-full flex flex-col">
+      <div className="flex justify-between items-start mb-5">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-[var(--g-primary)]/10 rounded-xl flex items-center justify-center text-[var(--g-primary)] border border-[var(--g-primary)]/20 shadow-inner">
             <i className="fas fa-user-graduate text-xl"></i>
           </div>
           <div>
-            <h4 className="text-white font-bold text-base leading-tight group-hover:text-[#a8c7fa] transition-colors">{member.name}</h4>
-            <p className="text-[10px] text-[#c4c7c5] font-black uppercase tracking-widest mt-1">NIM: {member.nim || '-'}</p>
+            <h4 className="text-[var(--g-on-surface)] font-bold text-sm leading-tight group-hover:text-[var(--g-primary)] transition-colors">{member.name}</h4>
+            <p className="text-[9px] text-[var(--g-on-surface-variant)] font-black uppercase tracking-widest mt-1">SMT {member.semester} • {member.faculty}</p>
           </div>
-        </div>
-        <div className="bg-[#a8c7fa]/10 px-3 py-1 rounded-full border border-[#a8c7fa]/20">
-          <span className="text-[9px] font-black text-[#a8c7fa] uppercase tracking-widest">SMT {member.semester}</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="space-y-1">
-          <p className="text-[8px] font-black text-[#c4c7c5] uppercase tracking-[0.2em]">Fakultas</p>
-          <p className="text-xs text-[#e3e3e3] font-medium truncate">{member.faculty}</p>
-        </div>
-        <div className="space-y-1">
-          <p className="text-[8px] font-black text-[#c4c7c5] uppercase tracking-[0.2em]">Program Studi</p>
-          <p className="text-xs text-[#e3e3e3] font-medium truncate">{member.major}</p>
+      <div className="space-y-3 mb-6 flex-1">
+        <div className="p-3 bg-[var(--g-surface-variant)] rounded-xl border border-[var(--g-border)]">
+          <p className="text-[8px] font-black text-[var(--g-on-surface-variant)] uppercase tracking-widest mb-1">Program Studi</p>
+          <p className="text-xs text-[var(--g-on-surface)] font-medium truncate">{member.major}</p>
         </div>
       </div>
 
@@ -52,18 +45,16 @@ const MemberCard: React.FC<MemberCardProps> = ({ member }) => {
         <button 
           onClick={handleWhatsApp}
           disabled={!member.whatsapp}
-          className="flex-1 py-3 bg-[#111314] hover:bg-green-500/10 border border-[#303134] hover:border-green-500/30 rounded-xl text-green-400 flex items-center justify-center gap-2 transition-all disabled:opacity-20"
+          className="flex-1 py-3 bg-green-500/10 hover:bg-green-500 hover:text-white border border-green-500/20 rounded-xl text-green-600 flex items-center justify-center gap-2 transition-all disabled:opacity-20 text-[10px] font-black uppercase tracking-widest px-2"
         >
-          <i className="fab fa-whatsapp text-sm"></i>
-          <span className="text-[9px] font-black uppercase tracking-widest">WhatsApp</span>
+          <i className="fab fa-whatsapp"></i> WhatsApp
         </button>
         <button 
           onClick={handleEmail}
           disabled={!member.email}
-          className="flex-1 py-3 bg-[#111314] hover:bg-[#a8c7fa]/10 border border-[#303134] hover:border-[#a8c7fa]/30 rounded-xl text-[#a8c7fa] flex items-center justify-center gap-2 transition-all disabled:opacity-20"
+          className="flex-1 py-3 bg-[var(--g-primary)]/10 hover:bg-[var(--g-primary)] hover:text-black border border-[var(--g-primary)]/20 rounded-xl text-[var(--g-primary)] flex items-center justify-center gap-2 transition-all disabled:opacity-20 text-[10px] font-black uppercase tracking-widest px-2"
         >
-          <i className="fas fa-envelope text-sm"></i>
-          <span className="text-[9px] font-black uppercase tracking-widest">Email</span>
+          <i className="fas fa-envelope"></i> E-mail
         </button>
       </div>
     </div>
